@@ -339,88 +339,84 @@ def scrape_community_page(url):
 
     return community_data
 
-def read_urls_from_file():
-    """Read product sitemap URLs from sample_discovery.txt and extract community URLs"""
+def process_sitemap_and_scrape(sitemap_url, output_file, all_communities, communities_batch, batch_size):
+    """Process a single product sitemap URL, extract community URL, scrape it, and save data"""
+    try:
+        # Get the XML content of the product sitemap
+        xml_content = get_page(sitemap_url)
+        if not xml_content:
+            log_message(f"Failed to fetch sitemap: {sitemap_url}")
+            return communities_batch
+
+        # Extract all URLs from this product sitemap
+        urls_in_sitemap = re.findall(r'<loc>([^<]+)</loc>', xml_content)
+
+        # Find the community URL (not /app/ URLs)
+        community_url = None
+        for url in urls_in_sitemap:
+            if '/app/' not in url and url.startswith('https://whop.com/discover/'):
+                community_url = url
+                break
+
+        if not community_url:
+            log_message(f"No community URL found in sitemap: {sitemap_url}")
+            return communities_batch
+
+        log_message(f"Found community URL: {community_url}")
+
+        # Scrape the community page immediately
+        community_data = scrape_community_page(community_url)
+        if community_data and community_data.get('community_name', 'Unknown') != 'Unknown':
+            communities_batch.append(community_data)
+            log_message(f"Successfully scraped: {community_data['community_name']}")
+
+            # Save data to file every batch_size communities
+            if len(communities_batch) >= batch_size:
+                all_communities.extend(communities_batch)
+
+                with open(output_file, "w", encoding="utf-8") as f:
+                    json.dump(all_communities, f, indent=2)
+
+                log_message(f"Saved batch of {len(communities_batch)} communities. Total: {len(all_communities)}")
+                communities_batch.clear()
+                gc.collect()
+
+        else:
+            log_message(f"Failed to scrape community: {community_url}")
+
+        # Small delay between requests
+        time.sleep(DELAY_BETWEEN_REQUESTS)
+
+    except Exception as e:
+        log_message(f"Error processing sitemap {sitemap_url}: {e}")
+
+    return communities_batch
+
+def read_and_process_urls_dynamically():
+    """Read product sitemap URLs from file and process them dynamically"""
     file_path = f"{OUTPUT_DIR}/sample_discovery.txt"
-    product_sitemap_urls = []
 
     try:
         with open(file_path, "r") as f:
-            for line in f:
-                url = line.strip()
-                if url and url.startswith("https://"):
-                    product_sitemap_urls.append(url)
+            product_sitemap_urls = [line.strip() for line in f if line.strip().startswith("https://")]
 
         log_message(f"Read {len(product_sitemap_urls)} product sitemap URLs from {file_path}")
 
     except FileNotFoundError:
         log_message(f"Error: File {file_path} not found!")
         log_message("Please run 'python explore.py' first to generate the URLs file.")
-        return []
+        return
     except Exception as e:
         log_message(f"Error reading {file_path}: {e}")
-        return []
-
-    # Now extract community URLs from each product sitemap
-    community_urls = []
-    log_message(f"Extracting community URLs from {len(product_sitemap_urls)} product sitemaps...")
-
-    # For testing - limit to first 100 sitemaps
-    test_limit = min(1000, len(product_sitemap_urls))
-    log_message(f"TESTING MODE: Processing first {test_limit} sitemaps only")
-
-    for i, sitemap_url in enumerate(product_sitemap_urls[:test_limit], 1):
-        if i % 50 == 0:  # More frequent logging
-            log_message(f"Processing sitemap {i}/{len(product_sitemap_urls)}... Found {len(community_urls)} communities so far")
-
-        try:
-            xml_content = get_page(sitemap_url)
-            if xml_content:
-                # Extract all URLs from this product sitemap
-                urls_in_sitemap = re.findall(r'<loc>([^<]+)</loc>', xml_content)
-
-                # Get the first URL (community URL, not /app/ URLs)
-                for url in urls_in_sitemap:
-                    if '/app/' not in url and url.startswith('https://whop.com/discover/'):
-                        community_urls.append(url)
-                        if i <= 5:  # Show first few for debugging
-                            log_message(f"  Found community URL: {url}")
-                        break  # Only take the first community URL
-
-            time.sleep(0.2)  # Faster processing
-
-        except Exception as e:
-            log_message(f"Error processing sitemap {sitemap_url}: {e}")
-            continue
-
-    log_message(f"Extracted {len(community_urls)} community URLs from product sitemaps")
-    return community_urls
-
-def main():
-    """Main scraping function"""
-    log_message("Starting Updated Whop Communities Scraper...")
-
-    # Step 1: Read product sitemap URLs and extract community URLs
-    log_message("Step 1: Reading product sitemap URLs from sample_discovery.txt...")
-    all_urls = read_urls_from_file()
-
-    if not all_urls:
-        log_message("No community URLs found! Please check your sample_discovery.txt file.")
         return
 
-    log_message(f"Total community URLs extracted: {len(all_urls)}")
-
-    # Step 2: Scrape each community
-    log_message("Step 2: Scraping individual community pages...")
+    # Initialize data structures
+    output_file = f"{OUTPUT_DIR}/raw_communities.json"
     communities_batch = []
-    failed_urls = []
     batch_size = 15
 
-    # Initialize or load existing data
-    output_file = f"{OUTPUT_DIR}/raw_communities.json"
-    all_communities = []
-
     # Load existing data if file exists
+    all_communities = []
     if os.path.exists(output_file):
         try:
             with open(output_file, "r", encoding="utf-8") as f:
@@ -429,33 +425,22 @@ def main():
         except:
             all_communities = []
 
-    for i, url in enumerate(all_urls, 1):
-        log_message(f"Scraping {i}/{len(all_urls)}: {url}")
+    # For testing - limit to first 200 sitemaps
+    test_limit = len(product_sitemap_urls)
+    log_message(f"TESTING MODE: Processing first {test_limit} sitemaps only")
 
-        community_data = scrape_community_page(url)
-        if community_data and community_data.get('community_name', 'Unknown') != 'Unknown':
-            communities_batch.append(community_data)
-            log_message(f"Successfully scraped: {community_data['community_name']}")
-        else:
-            failed_urls.append(url)
-            log_message(f"Failed to scrape: {url}")
+    # Process each sitemap URL dynamically
+    log_message("Starting dynamic processing: sitemap -> community URL -> scrape -> save")
 
-        # Dump data every 15 URLs and free memory
-        if len(communities_batch) >= batch_size:
-            # Append batch to existing data
-            all_communities.extend(communities_batch)
+    for i, sitemap_url in enumerate(product_sitemap_urls[:test_limit], 1):
+        log_message(f"Processing sitemap {i}/{test_limit}: {sitemap_url}")
 
-            # Save to file
-            with open(output_file, "w", encoding="utf-8") as f:
-                json.dump(all_communities, f, indent=2)
+        communities_batch = process_sitemap_and_scrape(
+            sitemap_url, output_file, all_communities, communities_batch, batch_size
+        )
 
-            log_message(f"Dumped batch of {len(communities_batch)} communities. Total: {len(all_communities)}")
-
-            # Free memory
-            communities_batch.clear()
-            gc.collect()
-
-        time.sleep(DELAY_BETWEEN_REQUESTS)
+        if i % 50 == 0:
+            log_message(f"Progress: {i}/{test_limit} sitemaps processed. Total communities: {len(all_communities)}")
 
     # Save any remaining communities in the final batch
     if communities_batch:
@@ -463,28 +448,29 @@ def main():
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(all_communities, f, indent=2)
         log_message(f"Saved final batch of {len(communities_batch)} communities")
-        communities_batch.clear()
 
-    # Step 3: Final summary
-    log_message("Step 3: Scraping complete!")
+    log_message(f"Dynamic processing complete! Total communities scraped: {len(all_communities)}")
+    return len(all_communities)
 
-    # Summary
+def main():
+    """Main scraping function - Dynamic processing version"""
+    log_message("Starting Updated Whop Communities Scraper...")
+    log_message("Using dynamic processing: sitemap -> community URL -> scrape -> save")
+
+    # Process URLs dynamically
+    total_communities = read_and_process_urls_dynamically()
+
+    if total_communities is None:
+        log_message("Dynamic processing failed! Please check your sample_discovery.txt file.")
+        return
+
+    # Final summary
     log_message("="*50)
-    log_message(f"Scraping Complete!")
-    log_message(f"Total URLs attempted: {len(all_urls)}")
-    log_message(f"Successfully scraped: {len(all_communities)}")
-    log_message(f"Failed: {len(failed_urls)}")
+    log_message(f"Dynamic Scraping Complete!")
+    log_message(f"Total communities scraped: {total_communities}")
     log_message(f"Data saved to: {OUTPUT_DIR}/raw_communities.json")
     log_message("="*50)
     log_message("Next step: Run 'python rank.py' to generate rankings")
 
-    # Save failed URLs for reference
-    if failed_urls:
-        with open(f"{OUTPUT_DIR}/failed_urls.txt", "w", encoding="utf-8") as f:
-            for url in failed_urls:
-                f.write(url + "\n")
-
 if __name__ == "__main__":
-
     main()
-
