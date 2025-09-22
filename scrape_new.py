@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Updated Whop Communities Scraper - Fixed for current HTML structure
-Run: python scrape_new.py
+Updated Whop Communities Scraper - Batch Processing by URL Ranges
+Run: python scrape_new.py <batch_number>
+Example: python scrape_new.py 1 (processes URLs 0-10000)
+         python scrape_new.py 2 (processes URLs 10000-20000)
 """
 
 import requests
@@ -12,6 +14,7 @@ import re
 from datetime import datetime
 import os
 import gc
+import sys
 
 # Configuration
 BASE_URL = "https://whop.com"
@@ -392,8 +395,8 @@ def process_sitemap_and_scrape(sitemap_url, output_file, all_communities, commun
 
     return communities_batch
 
-def read_and_process_urls_dynamically():
-    """Read product sitemap URLs from file and process them dynamically"""
+def read_and_process_urls_batch(batch_number):
+    """Read product sitemap URLs from file and process a specific batch range"""
     file_path = f"{OUTPUT_DIR}/sample_discovery.txt"
 
     try:
@@ -410,8 +413,20 @@ def read_and_process_urls_dynamically():
         log_message(f"Error reading {file_path}: {e}")
         return
 
+    # Calculate batch range
+    batch_size_urls = 10000  # Process 10k URLs per batch
+    start_index = (batch_number - 1) * batch_size_urls
+    end_index = min(start_index + batch_size_urls, len(product_sitemap_urls))
+
+    if start_index >= len(product_sitemap_urls):
+        log_message(f"Batch {batch_number} is out of range. Total URLs: {len(product_sitemap_urls)}")
+        return 0
+
+    batch_urls = product_sitemap_urls[start_index:end_index]
+    log_message(f"Processing batch {batch_number}: URLs {start_index} to {end_index} ({len(batch_urls)} URLs)")
+
     # Initialize data structures
-    output_file = f"{OUTPUT_DIR}/raw_communities.json"
+    output_file = f"{OUTPUT_DIR}/raw_communities_batch_{batch_number}.json"
     communities_batch = []
     batch_size = 15
 
@@ -421,26 +436,22 @@ def read_and_process_urls_dynamically():
         try:
             with open(output_file, "r", encoding="utf-8") as f:
                 all_communities = json.load(f)
-            log_message(f"Loaded {len(all_communities)} existing communities from file")
+            log_message(f"Loaded {len(all_communities)} existing communities from batch file")
         except:
             all_communities = []
 
-    # For testing - limit to first 200 sitemaps
-    test_limit = len(product_sitemap_urls)
-    log_message(f"TESTING MODE: Processing first {test_limit} sitemaps only")
+    # Process each sitemap URL in this batch
+    log_message(f"Starting batch {batch_number} processing: sitemap -> community URL -> scrape -> save")
 
-    # Process each sitemap URL dynamically
-    log_message("Starting dynamic processing: sitemap -> community URL -> scrape -> save")
-
-    for i, sitemap_url in enumerate(product_sitemap_urls[:test_limit], 1):
-        log_message(f"Processing sitemap {i}/{test_limit}: {sitemap_url}")
+    for i, sitemap_url in enumerate(batch_urls, 1):
+        log_message(f"Processing sitemap {start_index + i}/{len(product_sitemap_urls)}: {sitemap_url}")
 
         communities_batch = process_sitemap_and_scrape(
             sitemap_url, output_file, all_communities, communities_batch, batch_size
         )
 
         if i % 50 == 0:
-            log_message(f"Progress: {i}/{test_limit} sitemaps processed. Total communities: {len(all_communities)}")
+            log_message(f"Batch {batch_number} progress: {i}/{len(batch_urls)} sitemaps processed. Total communities: {len(all_communities)}")
 
     # Save any remaining communities in the final batch
     if communities_batch:
@@ -449,28 +460,45 @@ def read_and_process_urls_dynamically():
             json.dump(all_communities, f, indent=2)
         log_message(f"Saved final batch of {len(communities_batch)} communities")
 
-    log_message(f"Dynamic processing complete! Total communities scraped: {len(all_communities)}")
+    log_message(f"Batch {batch_number} processing complete! Total communities scraped: {len(all_communities)}")
     return len(all_communities)
 
 def main():
-    """Main scraping function - Dynamic processing version"""
-    log_message("Starting Updated Whop Communities Scraper...")
-    log_message("Using dynamic processing: sitemap -> community URL -> scrape -> save")
+    """Main scraping function - Batch processing version"""
+    if len(sys.argv) != 2:
+        print("Usage: python scrape_new.py <batch_number>")
+        print("Example: python scrape_new.py 1  (processes URLs 0-10000)")
+        print("         python scrape_new.py 2  (processes URLs 10000-20000)")
+        print("         python scrape_new.py 3  (processes URLs 20000-30000)")
+        sys.exit(1)
 
-    # Process URLs dynamically
-    total_communities = read_and_process_urls_dynamically()
+    try:
+        batch_number = int(sys.argv[1])
+        if batch_number < 1:
+            print("Batch number must be 1 or greater")
+            sys.exit(1)
+    except ValueError:
+        print("Batch number must be an integer")
+        sys.exit(1)
+
+    log_message("Starting Updated Whop Communities Scraper...")
+    log_message(f"Processing batch {batch_number} (10k URLs per batch)")
+    log_message("Using batch processing: sitemap -> community URL -> scrape -> save")
+
+    # Process URLs for this batch
+    total_communities = read_and_process_urls_batch(batch_number)
 
     if total_communities is None:
-        log_message("Dynamic processing failed! Please check your sample_discovery.txt file.")
+        log_message("Batch processing failed! Please check your sample_discovery.txt file.")
         return
 
     # Final summary
     log_message("="*50)
-    log_message(f"Dynamic Scraping Complete!")
-    log_message(f"Total communities scraped: {total_communities}")
-    log_message(f"Data saved to: {OUTPUT_DIR}/raw_communities.json")
+    log_message(f"Batch {batch_number} Scraping Complete!")
+    log_message(f"Total communities scraped in this batch: {total_communities}")
+    log_message(f"Data saved to: {OUTPUT_DIR}/raw_communities_batch_{batch_number}.json")
     log_message("="*50)
-    log_message("Next step: Run 'python rank.py' to generate rankings")
+    log_message("To merge all batches, run the merge script after all batches complete")
 
 if __name__ == "__main__":
     main()
