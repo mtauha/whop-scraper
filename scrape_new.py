@@ -366,7 +366,7 @@ def read_urls_from_file():
     log_message(f"Extracting community URLs from {len(product_sitemap_urls)} product sitemaps...")
 
     # For testing - limit to first 100 sitemaps
-    test_limit = en(product_sitemap_urls)
+    test_limit = len(product_sitemap_urls)
     log_message(f"TESTING MODE: Processing first {test_limit} sitemaps only")
 
     for i, sitemap_url in enumerate(product_sitemap_urls[:test_limit], 1):
@@ -485,4 +485,5 @@ def main():
                 f.write(url + "\n")
 
 if __name__ == "__main__":
+
     main()
